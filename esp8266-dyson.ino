@@ -15,6 +15,7 @@ char identifier[24];
 char MQTT_TOPIC_AVAILABILITY[128];
 char MQTT_TOPIC_STATE[128];
 char MQTT_TOPIC_AUTOCONF_FANSPEED_SENSOR[128];
+char MQTT_TOPIC_AUTOCONF_PM25_SENSOR[128];
 
 const char *mqttUsername = "username";
 const char *mqttPassword = "hunter2";
@@ -39,6 +40,10 @@ double current_fan_speed = 0;
 double last_sent_fan_speed = 0;
 bool fan_speed_valid = false;
 
+double current_pm25 = 0;
+double last_sent_pm25 = 0;
+bool pm25_valid = false;
+
 void publishState() {
     DynamicJsonDocument stateJson(604);
 
@@ -51,6 +56,7 @@ void publishState() {
     }
 
     stateJson["fan_speed"] = String(current_fan_speed);
+    stateJson["pm25"] = String(current_pm25);
 
     char payload[256];
     serializeJson(stateJson, payload);
@@ -79,12 +85,23 @@ void publishAutoConfig() {
     autoconfPayload["value_template"] = "{{value_json.fan_speed}}";
     autoconfPayload["unique_id"] = identifier + String("_fan_speed");
     autoconfPayload["icon"] = "mdi:fan";
-
     serializeJson(autoconfPayload, mqttPayload);
     mqttClient.publish(MQTT_TOPIC_AUTOCONF_FANSPEED_SENSOR, mqttPayload, true);
+    autoconfPayload.clear();
 
+    autoconfPayload["device"] = device.as<JsonObject>();
+    autoconfPayload["availability_topic"] = MQTT_TOPIC_AVAILABILITY;
+    autoconfPayload["state_topic"] = MQTT_TOPIC_STATE;
+    autoconfPayload["name"] = identifier + String(" PM 2.5");
+    autoconfPayload["unit_of_measurement"] = "μg/m³";
+    autoconfPayload["value_template"] = "{{value_json.pm25}}";
+    autoconfPayload["unique_id"] = identifier + String("_pm25");
+    autoconfPayload["icon"] = "mdi:air-filter";
+    serializeJson(autoconfPayload, mqttPayload);
+    mqttClient.publish(MQTT_TOPIC_AUTOCONF_PM25_SENSOR, mqttPayload, true);
     autoconfPayload.clear();
 }
+
 
 void mqttReconnect() {
     for (uint8_t attempt = 0; attempt < 3; ++attempt) {
@@ -104,6 +121,9 @@ void setup() {
     snprintf(MQTT_TOPIC_STATE, 127, "%s/%s/state", FIRMWARE_PREFIX, identifier);
     snprintf(MQTT_TOPIC_AUTOCONF_FANSPEED_SENSOR, 127,
              "homeassistant/sensor/%s/%s_fan_speed/config", FIRMWARE_PREFIX,
+             identifier);
+    snprintf(MQTT_TOPIC_AUTOCONF_PM25_SENSOR, 127,
+             "homeassistant/sensor/%s/%s_pm25/config", FIRMWARE_PREFIX,
              identifier);
 
     setupWifi();
@@ -125,13 +145,20 @@ void handleUart() {
             current_fan_speed = result.value.d64s[4];
             fan_speed_valid = true;
         }
+        if (result.success && result.field_id == 0x02000700 &&
+            result.param_count >= 1 && result.data_type == DataType_t::DOUBLE) {
+            current_pm25 = result.value.d64s[0];
+            pm25_valid = true;
+        }
     }
 }
 
 void maybePublish() {
-    if (fan_speed_valid && current_fan_speed != last_sent_fan_speed) {
+    if ((fan_speed_valid && current_fan_speed != last_sent_fan_speed)
+     || (pm25_valid && current_pm25 != last_sent_pm25)) {
         publishState();
         last_sent_fan_speed = current_fan_speed;
+        last_sent_pm25 = current_pm25;
     }
 }
 
